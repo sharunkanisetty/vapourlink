@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>VapourLink</title>
+</head>
+<body>
+  <h1>VapourLink</h1>
+
+  <div>
+    <h2>Host a Session</h2>
+    <button onclick="generateSession()">Generate Code</button>
+    <p id="sessionCode"></p>
+  </div>
+
+  <div id="incomingRequestUI" style="display: none;">
+    <h3>Incoming request...</h3>
+    <p id="requesterId"></p>
+    <button onclick="acceptRequest()">Accept</button>
+  </div>
+
+  <div id="screenShareUI" style="display: none;">
+    <h3>Screen Sharing</h3>
+    <video id="screenVideo" autoplay muted></video>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io('http://localhost:4000');
+    let sessionId = '';
+    let pendingRequesterId = '';
+    let peerConnection;
+
+    // Generate a session code
+    function generateSession() {
+      sessionId = Math.random().toString(36).substring(2, 8);
+      document.getElementById('sessionCode').innerText = 'Session Code: ' + sessionId;
+      socket.emit('create-session', { sessionId });
+    }
+
+    // Handle incoming requests from controllers
+    socket.on('incoming-request', ({ requesterId }) => {
+      console.log('Incoming request from controller:', requesterId); 
+      pendingRequesterId = requesterId;
+      document.getElementById('incomingRequestUI').style.display = 'block';
+      document.getElementById('requesterId').innerText = requesterId;
+    });
+
+    // Accept the request and start screen sharing
+    async function acceptRequest() {
+      document.getElementById('incomingRequestUI').style.display = 'none';
+      socket.emit('accept-request', { requesterId: pendingRequesterId });
+
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      console.log('Screen stream captured:', stream);
+
+      document.getElementById('screenShareUI').style.display = 'block';
+      document.getElementById('screenVideo').srcObject = stream;
+
+      // Create a peer connection for WebRTC
+      peerConnection = new RTCPeerConnection();
+      stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
+
+      peerConnection.onicecandidate = event => {
+        if (event.candidate) {
+          socket.emit('signal', {
+            to: pendingRequesterId,
+            data: { type: 'candidate', candidate: event.candidate }
+          });
+        }
+      };
+
+      // Create and send an offer to the controller
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+
+      socket.emit('signal', {
+        to: pendingRequesterId,
+        data: { type: 'offer', offer: offer }
+      });
+    }
+
+    // Handle signaling messages from the controller
+    socket.on('signal', async ({ data }) => {
+      console.log('Signal received from controller:', data);
+      if (data.type === 'answer') {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+      } else if (data.type === 'candidate') {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>VapourLink</title>
+</head>
+<body>
+  <h1>VapourLink</h1>
+
+  <div>
+    <h2>Join a Session</h2>
+    <input type="text" id="joinCode" placeholder="Enter Session Code" />
+    <button onclick="requestAccess()">Request Access</button>
+  </div>
+
+  <div id="screenShareUI" style="display: none;">
+    <h3>Viewing Screen</h3>
+    <video id="screenVideo" autoplay></video>
+  </div>
+  <script src="/socket.io/socket.io.js"></script>
+
+  <script>
+    const socket = io('http://localhost:4000');
+    let peerConnection;
+    let hostSocketId = null; // 👈 Save host socket ID here
+  
+    function requestAccess() {
+      const sessionId = document.getElementById('joinCode').value;
+      socket.emit('request-access', { sessionId });
+    }
+  
+    socket.on('access-granted', () => {
+      document.getElementById('screenShareUI').style.display = 'block';
+      console.log('Access granted by server'); 
+  
+      peerConnection = new RTCPeerConnection();
+  
+      peerConnection.ontrack = (event) => {
+        document.getElementById('screenVideo').srcObject = event.streams[0];
+      };
+  
+      peerConnection.onicecandidate = event => {
+        if (event.candidate && hostSocketId) {
+          socket.emit('signal', {
+            to: hostSocketId,
+            data: { type: 'candidate', candidate: event.candidate }
+          });
+        }
+      };
+    });
+  
+    socket.on('signal', async ({ from, data }) => {
+      if (data.type === 'offer') {
+        console.log('Received signal from host:', data); 
+        hostSocketId = from; // 👈 Capture host ID from signal
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+  
+        socket.emit('signal', {
+          to: hostSocketId, // 👈 Send answer directly to host
+          data: { type: 'answer', answer: answer }
+        });
+      } else if (data.type === 'candidate') {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+      }
+    });
+  </script>
+  
+</body>
+</html>
