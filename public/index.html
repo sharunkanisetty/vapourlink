@@ -1,63 +1,154 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8" />
   <title>VapourLink</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f3f4f6;
+      margin: 0;
+      padding: 2rem;
+      color: #111827;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 2.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    h2, h3 {
+      color: #1f2937;
+    }
+
+    button {
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      margin-top: 10px;
+      font-size: 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+
+    button:hover {
+      background-color: #1d4ed8;
+    }
+
+    #sessionCode {
+      font-size: 1.2rem;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+
+    #incomingRequestUI, #screenShareUI {
+      background-color: #ffffff;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 20px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    #remoteCursor {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      background-color: red;
+      border-radius: 50%;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      display: none;
+      z-index: 1000;
+      box-shadow: 0 0 6px rgba(0, 0, 0, 0.3);
+    }
+
+    video {
+      width: 100%;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      border: 1px solid #e5e7eb;
+    }
+
+    p {
+      margin: 0.5rem 0;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: auto;
+    }
+  </style>
 </head>
 <body>
-  <h1>VapourLink</h1>
+  <div class="container">
+    <h1>VapourLink</h1>
 
-  <div>
-    <h2>Host a Session</h2>
-    <button onclick="generateSession()">Generate Code</button>
-    <p id="sessionCode"></p>
-  </div>
+    <div>
+      <h2>Host a Session</h2>
+      <button onclick="generateSession()">Generate Code</button>
+      <p id="sessionCode"></p>
+    </div>
 
-  <div id="incomingRequestUI" style="display: none;">
-    <h3>Incoming request...</h3>
-    <p id="requesterId"></p>
-    <button onclick="acceptRequest()">Accept</button>
-  </div>
+    <div id="incomingRequestUI" style="display: none;">
+      <h3>Incoming request...</h3>
+      <p id="requesterId"></p>
+      <button onclick="acceptRequest()">Accept</button>
+    </div>
 
-  <div id="screenShareUI" style="display: none;">
-    <h3>Screen Sharing</h3>
-    <video id="screenVideo" autoplay muted></video>
+    <div id="screenShareUI" style="display: none;">
+      <h3>Screen Sharing</h3>
+      <video id="screenVideo" autoplay muted></video>
+      <div id="remoteCursor"></div>
+    </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
-    const socket = io('http://localhost:4000');
+    const socket = io(window.location.origin); // 👈 Automatically uses current IP and port
+    const nativeSocket = socket;
+
     let sessionId = '';
     let pendingRequesterId = '';
     let peerConnection;
 
-    // Generate a session code
+    const remoteCursor = document.getElementById('remoteCursor');
+    const screenVideo = document.getElementById('screenVideo');
+
+    function sendToNativeControl(data) {
+      if (nativeSocket.readyState === WebSocket.OPEN) {
+        nativeSocket.send(JSON.stringify(data));
+      }
+    }
+
     function generateSession() {
       sessionId = Math.random().toString(36).substring(2, 8);
       document.getElementById('sessionCode').innerText = 'Session Code: ' + sessionId;
       socket.emit('create-session', { sessionId });
     }
 
-    // Handle incoming requests from controllers
     socket.on('incoming-request', ({ requesterId }) => {
-      console.log('Incoming request from controller:', requesterId); 
       pendingRequesterId = requesterId;
       document.getElementById('incomingRequestUI').style.display = 'block';
       document.getElementById('requesterId').innerText = requesterId;
     });
 
-    // Accept the request and start screen sharing
     async function acceptRequest() {
       document.getElementById('incomingRequestUI').style.display = 'none';
       socket.emit('accept-request', { requesterId: pendingRequesterId });
 
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-      console.log('Screen stream captured:', stream);
-
       document.getElementById('screenShareUI').style.display = 'block';
-      document.getElementById('screenVideo').srcObject = stream;
+      screenVideo.srcObject = stream;
 
-      // Create a peer connection for WebRTC
-      peerConnection = new RTCPeerConnection();
+      peerConnection = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' } // ✅ NAT traversal
+        ]
+      });
+
       stream.getTracks().forEach(track => peerConnection.addTrack(track, stream));
 
       peerConnection.onicecandidate = event => {
@@ -69,7 +160,6 @@
         }
       };
 
-      // Create and send an offer to the controller
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
 
@@ -79,14 +169,43 @@
       });
     }
 
-    // Handle signaling messages from the controller
     socket.on('signal', async ({ data }) => {
-      console.log('Signal received from controller:', data);
       if (data.type === 'answer') {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
       } else if (data.type === 'candidate') {
         await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
       }
+    });
+
+    socket.on('mouse-move', ({ x, y }) => {
+      remoteCursor.style.display = 'block';
+
+      const rect = screenVideo.getBoundingClientRect();
+      const cursorX = rect.left + x * rect.width;
+      const cursorY = rect.top + y * rect.height;
+
+      remoteCursor.style.left = `${cursorX}px`;
+      remoteCursor.style.top = `${cursorY}px`;
+
+      const screenWidth = window.screen.width;
+      const screenHeight = window.screen.height;
+
+      sendToNativeControl({
+        type: 'mouse-move',
+        x: Math.floor(x * screenWidth),
+        y: Math.floor(y * screenHeight)
+      });
+    });
+
+    socket.on('mouse-click', ({ button }) => {
+      remoteCursor.style.backgroundColor = 'yellow';
+      setTimeout(() => remoteCursor.style.backgroundColor = 'red', 200);
+
+      sendToNativeControl({ type: 'mouse-click', button: button || 0 });
+    });
+
+    socket.on('key-press', ({ key }) => {
+      sendToNativeControl({ type: 'key-press', key });
     });
   </script>
 </body>

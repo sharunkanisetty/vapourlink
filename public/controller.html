@@ -1,44 +1,118 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>VapourLink</title>
+  <meta charset="UTF-8" />
+  <title>VapourLink Controller</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f3f4f6;
+      margin: 0;
+      padding: 2rem;
+      color: #111827;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 2.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    h2, h3 {
+      color: #1f2937;
+    }
+
+    button {
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      margin-top: 10px;
+      font-size: 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+
+    button:hover {
+      background-color: #1d4ed8;
+    }
+
+    input[type="text"] {
+      padding: 10px;
+      font-size: 1rem;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      width: 250px;
+      margin-top: 10px;
+      margin-right: 10px;
+    }
+
+    #screenShareUI {
+      background-color: #ffffff;
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 20px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    video {
+      width: 100%;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      border: 1px solid #e5e7eb;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: auto;
+    }
+  </style>
 </head>
 <body>
-  <h1>VapourLink</h1>
+  <div class="container">
+    <h1>VapourLink</h1>
 
-  <div>
-    <h2>Join a Session</h2>
-    <input type="text" id="joinCode" placeholder="Enter Session Code" />
-    <button onclick="requestAccess()">Request Access</button>
+    <div>
+      <h2>Join a Session</h2>
+      <input type="text" id="joinCode" placeholder="Enter Session Code" />
+      <button onclick="requestAccess()">Request Access</button>
+    </div>
+
+    <div id="screenShareUI" style="display: none;">
+      <h3>Controlling Screen</h3>
+      <video id="screenVideo" autoplay muted playsinline></video>
+    </div>
   </div>
 
-  <div id="screenShareUI" style="display: none;">
-    <h3>Viewing Screen</h3>
-    <video id="screenVideo" autoplay></video>
-  </div>
   <script src="/socket.io/socket.io.js"></script>
-
   <script>
-    const socket = io('http://localhost:4000');
+    const socket = io(); // Connects to same domain/port
+
     let peerConnection;
-    let hostSocketId = null; // 👈 Save host socket ID here
-  
+    let hostSocketId = null;
+
     function requestAccess() {
-      const sessionId = document.getElementById('joinCode').value;
+      const sessionId = document.getElementById('joinCode').value.trim();
+      if (!sessionId) {
+        alert('Please enter a valid session code.');
+        return;
+      }
       socket.emit('request-access', { sessionId });
     }
-  
+
     socket.on('access-granted', () => {
       document.getElementById('screenShareUI').style.display = 'block';
-      console.log('Access granted by server'); 
-  
-      peerConnection = new RTCPeerConnection();
-  
+
+      peerConnection = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+
       peerConnection.ontrack = (event) => {
         document.getElementById('screenVideo').srcObject = event.streams[0];
       };
-  
-      peerConnection.onicecandidate = event => {
+
+      peerConnection.onicecandidate = (event) => {
         if (event.candidate && hostSocketId) {
           socket.emit('signal', {
             to: hostSocketId,
@@ -46,25 +120,62 @@
           });
         }
       };
+
+      peerConnection.oniceconnectionstatechange = () => {
+        console.log("ICE state:", peerConnection.iceConnectionState);
+      };
     });
-  
+
     socket.on('signal', async ({ from, data }) => {
+      hostSocketId = from;
+
+      if (!peerConnection) return;
+
       if (data.type === 'offer') {
-        console.log('Received signal from host:', data); 
-        hostSocketId = from; // 👈 Capture host ID from signal
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
-  
+
         socket.emit('signal', {
-          to: hostSocketId, // 👈 Send answer directly to host
-          data: { type: 'answer', answer: answer }
+          to: hostSocketId,
+          data: { type: 'answer', answer }
         });
       } else if (data.type === 'candidate') {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        try {
+          await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (err) {
+          console.error("❌ Error adding ICE candidate:", err);
+        }
       }
     });
+
+    const video = document.getElementById('screenVideo');
+
+    video.addEventListener('mousemove', (e) => {
+      const rect = video.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      const y = (e.clientY - rect.top) / rect.height;
+
+      socket.emit('mouse-move', { x, y });
+    });
+
+    video.addEventListener('click', () => {
+      socket.emit('mouse-click', { button: 0 });
+    });
+
+    video.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      socket.emit('mouse-click', { button: 2 });
+    });
+
+    document.addEventListener('keydown', (e) => {
+      socket.emit('key-press', {
+        key: e.key,
+        ctrl: e.ctrlKey,
+        alt: e.altKey,
+        shift: e.shiftKey
+      });
+    });
   </script>
-  
 </body>
 </html>

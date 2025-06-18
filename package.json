@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "concurrently \"node server.js\" \"node native-control.js\""
   },
   "keywords": [],
   "author": "",
@@ -13,6 +14,9 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.1.0",
-    "socket.io": "^4.8.1"
+    "robotjs": "^0.6.0",
+    "socket.io": "^4.8.1",
+    "ws": "^8.18.2",
+    "concurrently": "^8.2.2"
   }
 }

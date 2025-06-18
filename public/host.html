@@ -1,0 +1,100 @@
+<!-- public/host.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>VapourLink Host</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f9fafb;
+      color: #111827;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    input, button {
+      padding: 0.6rem 1rem;
+      font-size: 1rem;
+      margin: 0.5rem;
+    }
+
+    video {
+      margin-top: 1rem;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      width: 90%;
+      max-width: 800px;
+    }
+  </style>
+</head>
+<body>
+  <h1>VapourLink - Host</h1>
+
+  <div>
+    <input type="text" id="sessionId" placeholder="Enter Session Code" />
+    <button onclick="createSession()">Create Session</button>
+  </div>
+
+  <video id="preview" autoplay muted></video>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io(window.location.origin);
+    let peerConnections = {};
+
+    async function createSession() {
+      const sessionId = document.getElementById('sessionId').value.trim();
+      if (!sessionId) return alert("Enter a session code.");
+
+      socket.emit('create-session', { sessionId });
+      document.getElementById('sessionId').disabled = true;
+
+      // Start screen capture
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      document.getElementById('preview').srcObject = stream;
+
+      socket.on('incoming-request', ({ requesterId }) => {
+        console.log('Request from', requesterId);
+        socket.emit('accept-request', { requesterId });
+
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket.emit('signal', {
+              to: requesterId,
+              data: { type: 'candidate', candidate: event.candidate }
+            });
+          }
+        };
+
+        pc.createOffer().then(offer => {
+          pc.setLocalDescription(offer);
+          socket.emit('signal', {
+            to: requesterId,
+            data: { type: 'offer', offer }
+          });
+        });
+
+        peerConnections[requesterId] = pc;
+      });
+
+      socket.on('signal', async ({ from, data }) => {
+        const pc = peerConnections[from];
+        if (!pc) return;
+
+        if (data.type === 'answer') {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        } else if (data.type === 'candidate') {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+      });
+    }
+  </script>
+</body>
+</html>
